@@ -113,6 +113,17 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
 textarea.field{min-height:90px;direction:ltr;font-family:monospace;font-size:.8rem}
 .note{font-size:.82rem;color:var(--muted);margin:0 0 10px}
 [hidden]{display:none!important}
+.chips{display:flex;gap:8px;overflow-x:auto;padding:2px 2px 12px;margin:0 -2px;scrollbar-width:none}
+.chip{flex:none;border:1px solid var(--line);background:var(--surface);border-radius:20px;padding:8px 14px;font-size:.9rem;white-space:nowrap}
+.chip b{font-weight:700;margin-inline-start:8px;direction:ltr;display:inline-block;color:var(--muted)}
+.chip[aria-pressed="true"]{background:var(--brand);color:var(--brand-ink);border-color:var(--brand)}
+.chip[aria-pressed="true"] b{color:inherit;opacity:.85}
+.chip.add{border-style:dashed;color:var(--muted)}
+.tblgrid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:14px 0}
+.tblgrid button{padding:12px 0;border-radius:10px;border:1px solid var(--line);background:var(--surface);font-weight:700}
+.tblgrid button:disabled{opacity:.3}
+.sec{font-size:.85rem;color:var(--muted);margin:4px 4px 6px;font-weight:600}
+.rc.open{border-color:var(--gold);border-width:2px}
 .sync{font-size:.75rem;display:inline-flex;align-items:center;gap:5px;margin-inline-end:10px}
 .sync::before{content:"";width:8px;height:8px;border-radius:50%;background:currentColor}
 .sync.ok{color:#8fe0b8}.sync.pending,.sync.syncing{color:#f0c45a}.sync.error{color:#ff9a8f}.sync.offline{color:#c8d2ce}
@@ -130,6 +141,7 @@ textarea.field{min-height:90px;direction:ltr;font-family:monospace;font-size:.8r
   <main>
     <!-- SELL -->
     <section class="view on" id="v-sell">
+      <div class="chips" id="chips"></div>
       <input class="search" id="sellSearch" type="search" placeholder="گەڕان بۆ ئایتم…" aria-label="گەڕان">
       <div class="grid" id="sellGrid"></div>
     </section>
@@ -201,7 +213,7 @@ textarea.field{min-height:90px;direction:ltr;font-family:monospace;font-size:.8r
     <button class="toggle" id="cartToggle" hidden>پیشاندانی وەسڵ</button>
     <ul class="lines" id="cartLines" hidden></ul>
     <div class="row">
-      <div class="tot"><small>کۆی گشتی</small><b id="cartTotal">0</b></div>
+      <div class="tot"><small id="totLabel">کۆی گشتی</small><b id="cartTotal">0</b></div>
       <button class="btn ghost" id="cartClear" hidden>پاککردنەوە</button>
       <button class="btn gold" id="cashBtn" disabled>کاش بکە</button>
     </div>
@@ -217,7 +229,7 @@ textarea.field{min-height:90px;direction:ltr;font-family:monospace;font-size:.8r
 <!-- checkout dialog -->
 <dialog id="dlgCash">
   <div class="receipt">
-    <h3>کاشکردن</h3>
+    <h3 id="cashTitle">کاشکردن</h3>
     <div class="meta">کۆی گشتی: <b id="cashTotal" dir="ltr"></b></div>
     <label for="paid">پارەی وەرگیراو (ئارەزوومەندانە)</label>
     <input class="field" id="paid" type="number" inputmode="numeric" min="0" dir="ltr">
@@ -234,7 +246,22 @@ textarea.field{min-height:90px;direction:ltr;font-family:monospace;font-size:.8r
   <div class="receipt" id="rcBody"></div>
   <div class="dlg-actions">
     <button class="btn danger" id="rcDelete">سڕینەوە</button>
+    <button class="btn ghost" id="rcEdit">دەستکاری</button>
     <button class="btn" id="rcClose">داخستن</button>
+  </div>
+</dialog>
+
+<!-- new table dialog -->
+<dialog id="dlgTable">
+  <div class="receipt">
+    <h3>مێزی نوێ</h3>
+    <div class="tblgrid" id="tblGrid"></div>
+    <label for="tblName">یان ناوێک بنووسە</label>
+    <input class="field" id="tblName" placeholder="بۆ نموونە: باخچە ٢، سەفەری">
+  </div>
+  <div class="dlg-actions">
+    <button class="btn ghost" id="tblCancel">گەڕانەوە</button>
+    <button class="btn" id="tblOk">کردنەوە</button>
   </div>
 </dialog>
 
@@ -280,6 +307,32 @@ textarea.field{min-height:90px;direction:ltr;font-family:monospace;font-size:.8r
   }
 
   /* SELL */
+  var active=null; // open bill id (table); null = quick sale
+  function bill(id){for(var i=0;i<S.receipts.length;i++)if(S.receipts[i].id===id)return S.receipts[i];return null}
+  function openBills(){return S.receipts.filter(function(r){return r.status==='open'})}
+  function billTotal(r){return r.lines.reduce(function(a,l){return a+l.price*l.qty},0)}
+  function touch(r){r.total=billTotal(r);r.updatedAt=Date.now()}
+  function billName(r){return r.table||('وەسڵ #'+r.no)}
+  function activeBill(){var r=active&&bill(active);if(!r||r.status!=='open'){active=null;return null}return r}
+  function qtyInView(id){var r=activeBill();if(!r)return cart[id]||0;return r.lines.reduce(function(a,l){return a+(l.id===id?l.qty:0)},0)}
+  function cnt(r){return r.lines.reduce(function(a,l){return a+l.qty},0)}
+
+  function renderChips(){
+    var r=activeBill();
+    var h='<button class="chip" data-c="quick" aria-pressed="'+(!r)+'">فرۆشی خێرا</button>';
+    openBills().forEach(function(x){
+      h+='<button class="chip" data-c="'+x.id+'" aria-pressed="'+!!(r&&r.id===x.id)+'">'+esc(billName(x))+'<b>'+Math.round(x.total||0).toLocaleString('en-US')+'</b></button>';
+    });
+    h+='<button class="chip add" data-c="new">+ مێزی نوێ</button>';
+    $('chips').innerHTML=h;
+  }
+  $('chips').addEventListener('click',function(e){
+    var c=e.target.closest('.chip');if(!c)return;
+    var v=c.dataset.c;
+    if(v==='new'){openTableDlg();return}
+    active=(v==='quick')?null:v;cartOpen=!!active;render();
+  });
+
   function renderSell(){
     var q=$('sellSearch').value.trim().toLowerCase();
     var g=$('sellGrid');
@@ -291,103 +344,168 @@ textarea.field{min-height:90px;direction:ltr;font-family:monospace;font-size:.8r
     var list=S.items.filter(function(it){return !q||it.name.toLowerCase().indexOf(q)>-1});
     if(!list.length){g.innerHTML='<div class="empty" style="grid-column:1/-1">هیچ ئایتمێک بەم ناوە نییە.</div>';return}
     g.innerHTML=list.map(function(it){
-      var c=cart[it.id];
+      var c=qtyInView(it.id);
       return '<button class="tile" data-id="'+it.id+'">'+(c?'<span class="q">'+c+'</span>':'')+
         '<span class="n">'+esc(it.name)+'</span><span class="p">'+money(it.price)+'</span></button>';
     }).join('');
   }
   $('sellGrid').addEventListener('click',function(e){
-    var t=e.target.closest('.tile'); if(!t)return;
-    cart[t.dataset.id]=(cart[t.dataset.id]||0)+1;
+    var t=e.target.closest('.tile');if(!t)return;
+    var id=t.dataset.id,r=activeBill();
+    if(r){
+      var it=itemById(id);if(!it)return;
+      var l=null;r.lines.forEach(function(x){if(x.id===id&&x.price===it.price)l=x});
+      if(l)l.qty++;else r.lines.push({id:id,name:it.name,price:it.price,qty:1});
+      touch(r);save();
+    }else cart[id]=(cart[id]||0)+1;
     render();
   });
   $('sellSearch').addEventListener('input',renderSell);
 
-  function cartTotal(){
-    var s=0;for(var id in cart){var it=itemById(id);if(it)s+=it.price*cart[id]}return s;
+  function curLines(){
+    var r=activeBill();
+    if(r)return r.lines.map(function(l,i){return {key:String(i),name:l.name,price:l.price,qty:l.qty}});
+    return Object.keys(cart).filter(function(id){return itemById(id)}).map(function(id){var it=itemById(id);return {key:id,name:it.name,price:it.price,qty:cart[id]}});
   }
+  function curTotal(){return curLines().reduce(function(a,l){return a+l.price*l.qty},0)}
   function renderCart(){
-    var ids=Object.keys(cart).filter(function(id){return itemById(id)});
-    var n=ids.reduce(function(a,id){return a+cart[id]},0);
-    $('cartTotal').textContent=money(cartTotal());
+    var r=activeBill(),lines=curLines();
+    var n=lines.reduce(function(a,l){return a+l.qty},0);
+    $('totLabel').textContent=r?'کۆی '+billName(r):'کۆی گشتی';
+    $('cartTotal').textContent=money(curTotal());
     $('cashBtn').disabled=!n;
-    $('cartClear').hidden=!n;
+    $('cartClear').hidden=r?false:!n;
+    $('cartClear').textContent=r?'سڕینەوە':'پاککردنەوە';
     $('cartToggle').hidden=!n;
     $('cartToggle').textContent=cartOpen?'شاردنەوەی وەسڵ':'پیشاندانی وەسڵ ('+n+' دانە)';
     var L=$('cartLines');
     L.hidden=!(n&&cartOpen);
-    L.innerHTML=ids.map(function(id){var it=itemById(id);
-      return '<li><div class="nm">'+esc(it.name)+'<span>'+money(it.price*cart[id])+'</span></div>'+
-        '<div class="qty"><button data-a="plus" data-id="'+id+'" aria-label="زیاد">+</button><output>'+cart[id]+
-        '</output><button data-a="minus" data-id="'+id+'" aria-label="کەم">−</button></div></li>';
+    L.innerHTML=lines.map(function(l){
+      return '<li><div class="nm">'+esc(l.name)+'<span>'+money(l.price*l.qty)+'</span></div>'+
+        '<div class="qty"><button data-a="plus" data-k="'+l.key+'" aria-label="زیاد">+</button><output>'+l.qty+
+        '</output><button data-a="minus" data-k="'+l.key+'" aria-label="کەم">−</button></div></li>';
     }).join('');
   }
   $('cartLines').addEventListener('click',function(e){
     var b=e.target.closest('button');if(!b)return;
-    var id=b.dataset.id;
-    if(b.dataset.a==='plus')cart[id]++;else{cart[id]--;if(cart[id]<=0)delete cart[id]}
+    var k=b.dataset.k,plus=b.dataset.a==='plus',r=activeBill();
+    if(r){var l=r.lines[+k];if(!l)return;l.qty+=plus?1:-1;if(l.qty<=0)r.lines.splice(+k,1);touch(r);save()}
+    else{cart[k]+=plus?1:-1;if(cart[k]<=0)delete cart[k]}
     render();
   });
   $('cartToggle').onclick=function(){cartOpen=!cartOpen;renderCart()};
-  $('cartClear').onclick=function(){cart={};cartOpen=false;render()};
+  $('cartClear').onclick=function(){
+    var r=activeBill();
+    if(r){
+      if(!confirm('«'+billName(r)+'» بە تەواوی بسڕدرێتەوە؟'))return;
+      S.receipts=S.receipts.filter(function(x){return x.id!==r.id});S.deleted=(S.deleted||[]).concat(r.id);
+      active=null;save();toast('سڕایەوە');
+    }else cart={};
+    cartOpen=false;render();
+  };
+
+  /* TABLES */
+  function openTableDlg(){
+    var used={};openBills().forEach(function(x){if(x.table)used[x.table]=1});
+    var h='';for(var i=1;i<=20;i++){var nm='مێزی '+i;h+='<button data-t="'+nm+'"'+(used[nm]?' disabled':'')+'>'+i+'</button>'}
+    $('tblGrid').innerHTML=h;$('tblName').value='';$('dlgTable').showModal();
+  }
+  function openTable(name){
+    name=name.trim();if(!name)return;
+    var ex=openBills().filter(function(x){return x.table===name})[0];
+    if(ex)active=ex.id;
+    else{
+      var now=Date.now(),r={id:uid(),no:S.nextNo++,date:now,updatedAt:now,status:'open',table:name,lines:[],total:0,paid:null};
+      Object.keys(cart).forEach(function(id){var it=itemById(id);if(it)r.lines.push({id:id,name:it.name,price:it.price,qty:cart[id]})});
+      cart={};touch(r);S.receipts.unshift(r);active=r.id;save();
+    }
+    $('dlgTable').close();cartOpen=true;go('sell');
+  }
+  $('tblGrid').addEventListener('click',function(e){var b=e.target.closest('button');if(b&&!b.disabled)openTable(b.dataset.t)});
+  $('tblOk').onclick=function(){var v=$('tblName').value.trim();if(!v){toast('ژمارەیەک هەڵبژێرە یان ناوێک بنووسە');return}openTable(v)};
+  $('tblName').addEventListener('keydown',function(e){if(e.key==='Enter')$('tblOk').click()});
+  $('tblCancel').onclick=function(){$('dlgTable').close()};
 
   /* CHECKOUT */
   $('cashBtn').onclick=function(){
-    $('cashTotal').textContent=money(cartTotal());
+    var r=activeBill();
+    $('cashTitle').textContent=r?'کاشکردنی '+billName(r):'کاشکردن';
+    $('cashTotal').textContent=money(curTotal());
     $('paid').value='';$('change').textContent='—';
     $('dlgCash').showModal();
   };
   $('paid').addEventListener('input',function(){
-    var p=parseFloat(this.value),t=cartTotal();
+    var p=parseFloat(this.value),t=curTotal();
     if(isNaN(p)){$('change').textContent='—';return}
     $('change').textContent=p>=t?money(p-t):'کەمە: '+money(t-p);
   });
   $('cashCancel').onclick=function(){$('dlgCash').close()};
   $('cashConfirm').onclick=function(){
-    var t=cartTotal(),p=parseFloat($('paid').value);
+    var t=curTotal(),p=parseFloat($('paid').value);
     if(!isNaN(p)&&p<t){toast('پارەی وەرگیراو کەمترە لە کۆی گشتی');return}
-    var lines=Object.keys(cart).map(function(id){var it=itemById(id);return it?{name:it.name,price:it.price,qty:cart[id]}:null}).filter(Boolean);
-    var r={id:uid(),no:S.nextNo++,date:Date.now(),lines:lines,total:t,paid:isNaN(p)?null:p};
-    S.receipts.unshift(r);save();
-    cart={};cartOpen=false;
-    $('dlgCash').close();
-    render();
-    showReceipt(r.id);
-    toast('وەسڵ #'+r.no+' خەزن کرا');
+    var r=activeBill(),now=Date.now();
+    if(r){r.status='paid';r.paid=isNaN(p)?null:p;r.paidAt=now;touch(r)}
+    else{
+      var lines=curLines().map(function(l){return {id:l.key,name:l.name,price:l.price,qty:l.qty}});
+      r={id:uid(),no:S.nextNo++,date:now,paidAt:now,updatedAt:now,status:'paid',lines:lines,total:t,paid:isNaN(p)?null:p};
+      S.receipts.unshift(r);cart={};
+    }
+    save();active=null;cartOpen=false;
+    $('dlgCash').close();render();showReceipt(r.id);
+    toast(billName(r)+' کاش کرا');
   };
 
   /* RECEIPTS */
+  function when(r){return r.paidAt||r.date}
   function renderReceipts(){
     var tk=dayKey(Date.now());
-    var todays=S.receipts.filter(function(r){return dayKey(r.date)===tk});
+    var paid=S.receipts.filter(function(r){return r.status!=='open'}).sort(function(a,b){return when(b)-when(a)});
+    var todays=paid.filter(function(r){return dayKey(when(r))===tk});
     $('todayTotal').textContent=money(todays.reduce(function(a,r){return a+r.total},0));
     $('todayCount').textContent=todays.length+' وەسڵ';
-    var box=$('rcList');
-    if(!S.receipts.length){box.innerHTML='<div class="empty">هێشتا هیچ وەسڵێک نییە. لە بەشی فرۆشتن یەکەم وەسڵ دروست بکە.</div>';return}
-    var html='',last='';
-    S.receipts.forEach(function(r){
-      var k=dayKey(r.date);
+    var open=openBills(),box=$('rcList'),html='';
+    if(!paid.length&&!open.length){box.innerHTML='<div class="empty">هێشتا هیچ وەسڵێک نییە. لە بەشی فرۆشتن یەکەم وەسڵ دروست بکە.</div>';return}
+    if(open.length){
+      html+='<div class="sec">مێزە کراوەکان</div>';
+      open.forEach(function(r){
+        html+='<button class="rc open" data-open="'+r.id+'"><div>'+esc(billName(r))+'<br><span>کراوەیە لە '+fmtTime(r.date)+' · '+cnt(r)+' دانە</span></div><b>'+money(r.total||0)+'</b></button>';
+      });
+    }
+    var last='';
+    paid.forEach(function(r){
+      var k=dayKey(when(r));
       if(k!==last){
-        var dayTot=S.receipts.filter(function(x){return dayKey(x.date)===k}).reduce(function(a,x){return a+x.total},0);
-        html+='<div class="day">'+(k===tk?'ئەمڕۆ':fmtDate(r.date))+' — '+money(dayTot)+'</div>';last=k;
+        var dayTot=paid.filter(function(x){return dayKey(when(x))===k}).reduce(function(a,x){return a+x.total},0);
+        html+='<div class="day">'+(k===tk?'ئەمڕۆ':fmtDate(when(r)))+' — '+money(dayTot)+'</div>';last=k;
       }
-      var cnt=r.lines.reduce(function(a,l){return a+l.qty},0);
-      html+='<button class="rc" data-id="'+r.id+'"><div>وەسڵ #'+r.no+'<br><span>'+fmtTime(r.date)+' · '+cnt+' دانە</span></div><b>'+money(r.total)+'</b></button>';
+      html+='<button class="rc" data-id="'+r.id+'"><div>'+(r.table?esc(r.table)+' · ':'')+'وەسڵ #'+r.no+'<br><span>'+fmtTime(when(r))+' · '+cnt(r)+' دانە</span></div><b>'+money(r.total)+'</b></button>';
     });
     box.innerHTML=html;
   }
-  $('rcList').addEventListener('click',function(e){var b=e.target.closest('.rc');if(b)showReceipt(b.dataset.id)});
+  $('rcList').addEventListener('click',function(e){
+    var b=e.target.closest('.rc');if(!b)return;
+    if(b.dataset.open){active=b.dataset.open;cartOpen=true;go('sell')}
+    else showReceipt(b.dataset.id);
+  });
   function showReceipt(id){
-    var r=S.receipts.find(function(x){return x.id===id});if(!r)return;openRc=id;
+    var r=bill(id);if(!r)return;openRc=id;
     var rows=r.lines.map(function(l){return '<tr><td>'+esc(l.name)+'<br><span style="color:var(--muted);font-size:.8rem" dir="ltr">'+l.qty+' × '+money(l.price)+'</span></td><td class="num">'+money(l.qty*l.price)+'</td></tr>'}).join('');
     var extra=r.paid!=null?'<div class="sub"><span>وەرگیراو</span><span dir="ltr">'+money(r.paid)+'</span></div><div class="sub"><span>باقی</span><span dir="ltr">'+money(r.paid-r.total)+'</span></div>':'';
-    $('rcBody').innerHTML='<h3>'+esc(S.shop)+'</h3><div class="meta">وەسڵ #'+r.no+' — '+fmtDate(r.date)+' '+fmtTime(r.date)+'</div><table>'+rows+'</table><div class="sum"><span>کۆی گشتی</span><span dir="ltr">'+money(r.total)+'</span></div>'+extra;
+    var st=r.status==='open'?' — کراوەیە':'';
+    $('rcBody').innerHTML='<h3>'+esc(S.shop)+'</h3><div class="meta">'+(r.table?esc(r.table)+' — ':'')+'وەسڵ #'+r.no+' — '+fmtDate(when(r))+' '+fmtTime(when(r))+st+'</div><table>'+rows+'</table><div class="sum"><span>کۆی گشتی</span><span dir="ltr">'+money(r.total)+'</span></div>'+extra;
+    $('rcEdit').textContent=r.status==='open'?'کردنەوە':'دەستکاری';
     $('dlgRc').showModal();
   }
   $('rcClose').onclick=function(){$('dlgRc').close()};
+  $('rcEdit').onclick=function(){
+    var r=bill(openRc);if(!r)return;
+    if(r.status!=='open'){r.status='open';r.paid=null;delete r.paidAt;touch(r);save();toast(billName(r)+' کرایەوە بۆ دەستکاری')}
+    active=r.id;cartOpen=true;$('dlgRc').close();go('sell');
+  };
   $('rcDelete').onclick=function(){
     if(!confirm('ئەم وەسڵە بسڕدرێتەوە؟'))return;
     S.receipts=S.receipts.filter(function(x){return x.id!==openRc});S.deleted=(S.deleted||[]).concat(openRc);save();
+    if(active===openRc)active=null;
     $('dlgRc').close();render();toast('وەسڵ سڕایەوە');
   };
 
@@ -480,7 +598,7 @@ textarea.field{min-height:90px;direction:ltr;font-family:monospace;font-size:.8r
   function merge(a,b){
     if(!b||!Array.isArray(b.receipts))return a;
     var del={};(a.deleted||[]).concat(b.deleted||[]).forEach(function(id){del[id]=1});
-    var map={};b.receipts.concat(a.receipts||[]).forEach(function(r){map[r.id]=r});
+    var map={};b.receipts.concat(a.receipts||[]).forEach(function(r){var o=map[r.id];if(!o||(r.updatedAt||r.date)>=(o.updatedAt||o.date))map[r.id]=r});
     var rc=Object.keys(map).map(function(k){return map[k]}).filter(function(r){return !del[r.id]}).sort(function(x,y){return y.date-x.date});
     var maxNo=rc.reduce(function(m,r){return Math.max(m,r.no||0)},0);
     var src=(b.itemsAt||0)>(a.itemsAt||0)?b:a;
@@ -543,7 +661,7 @@ textarea.field{min-height:90px;direction:ltr;font-family:monospace;font-size:.8r
   document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible')sync()});
 
   function render(){
-    if(current==='sell'){renderSell();renderCart()}
+    if(current==='sell'){renderChips();renderSell();renderCart()}
     if(current==='items')renderItems();
     if(current==='receipts')renderReceipts();
   }
